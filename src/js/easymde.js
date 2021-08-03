@@ -139,6 +139,36 @@ function fixShortcut(name) {
 }
 
 /**
+ * Wrapper for local storage operation
+ * @param {string} key 
+ * @param {object} obj "value" field is a must
+ */
+
+function writeToLocalStorage(key, obj){
+    localStorage.setItem(key, JSON.stringify(obj))
+}
+
+/**
+ * Wrapper for local storage operation
+ * @param {string} key 
+ * @returns {object, null}
+ */
+
+function readFromLocalStorage(key){
+    let raw = localStorage.getItem(key);
+    if (raw===null) return null;
+    return JSON.parse(raw)
+}
+
+/**
+ * Wrapper for local storage operation
+ * @param {string} key 
+ */
+function clearLocalStorage(key){
+    localStorage.removeItem(key)
+}
+
+/**
  * Class handling utility methods.
  */
 var CLASS_REGEX = {};
@@ -2210,8 +2240,8 @@ EasyMDE.prototype.cleanup = function () {
 function isLocalStorageAvailable() {
     if (typeof localStorage === 'object') {
         try {
-            localStorage.setItem('smde_localStorage', 1);
-            localStorage.removeItem('smde_localStorage');
+            writeToLocalStorage('smde_localStorage', {value:'1'});
+            clearLocalStorage('smde_localStorage');
         } catch (e) {
             return false;
         }
@@ -2237,7 +2267,7 @@ EasyMDE.prototype.autosave = function () {
                     clearTimeout(easyMDE.autosaveTimeoutId);
                     easyMDE.autosaveTimeoutId = undefined;
 
-                    localStorage.removeItem('smde_' + easyMDE.options.autosave.uniqueId);
+                    clearLocalStorage('smde_' + easyMDE.options.autosave.uniqueId);
                 });
             }
 
@@ -2245,20 +2275,51 @@ EasyMDE.prototype.autosave = function () {
         }
 
         if (this.options.autosave.loaded !== true) {
-            if (typeof localStorage.getItem('smde_' + this.options.autosave.uniqueId) == 'string' && localStorage.getItem('smde_' + this.options.autosave.uniqueId) != '') {
-                this.codemirror.setValue(localStorage.getItem('smde_' + this.options.autosave.uniqueId));
+            let local_tmp = readFromLocalStorage('smde_' + this.options.autosave.uniqueId);
+            if (local_tmp !== null && local_tmp.value !== null) {
+                let value = local_tmp.value;  
+                if(this.options.autosave.remote_local_init_resolve) value = this.options.autosave.remote_local_init_resolve(local_tmp);
+                this.codemirror.setValue(value);
+                this.codemirror.getDoc().clearHistory(); // HWJ: 重新刷新頁面讀取之前最新autosave內容並設定為初始值後，應該把cm的undo/redo歷史清空才合理，不然按ctrl-z(undo)馬上讓原本載入的內容都消失。
                 this.options.autosave.foundSavedValue = true;
             }
+
+
+            if (this.options.autosave.remote_autosave_cb){
+                clearTimeout(this._remote_autosave_interval);
+                let _this = this;
+                this._remote_autosave_interval = setInterval( ()=> {
+                    let local_obj = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                    if (local_obj==null) return;
+                    _this.options.autosave.remote_autosave_cb(local_obj)
+                        .then(()=>{
+                            console.log('remote_autosave_cb success!'); 
+                            // 經過一段時間了, 如果本地的沒有更新的話，就可以刪掉了，不然會一直重複上傳。
+                            let local_obj_again = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                            console.log(local_obj_again, local_obj);
+                            if (local_obj_again && local_obj_again.value == local_obj.value){
+                                clearLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                                console.log('delete success!')
+                            }
+                        })
+                        .catch(e=>console.error(e))
+    
+                }, this.options.autosave.save_remote_interval || 800);
+            }
+
+
 
             this.options.autosave.loaded = true;
         }
 
         var value = easyMDE.value();
-        if (value !== '') {
-            localStorage.setItem('smde_' + this.options.autosave.uniqueId, value);
-        } else {
-            localStorage.removeItem('smde_' + this.options.autosave.uniqueId);
-        }
+
+        // HWJ: make it an empty store anyway
+        // if (value !== '') {
+            writeToLocalStorage('smde_' + this.options.autosave.uniqueId, {value, ...(this.options.autosave.autosave_meta?this.options.autosave.autosave_meta():{})});
+        // } else {
+        //     clearLocalStorage('smde_' + this.options.autosave.uniqueId);
+        // }
 
         var el = document.getElementById('autosaved');
         if (el != null && el != undefined && el != '') {
@@ -2280,7 +2341,7 @@ EasyMDE.prototype.clearAutosavedValue = function () {
             return;
         }
 
-        localStorage.removeItem('smde_' + this.options.autosave.uniqueId);
+        clearLocalStorage('smde_' + this.options.autosave.uniqueId);
     } else {
         console.log('EasyMDE: localStorage not available, cannot autosave');
     }
@@ -2917,6 +2978,10 @@ EasyMDE.prototype.toTextArea = function () {
         clearTimeout(this.autosaveTimeoutId);
         this.autosaveTimeoutId = undefined;
         this.clearAutosavedValue();
+    }
+    if (this._remote_autosave_interval){
+        clearTimeout(this._remote_autosave_interval);
+        this._remote_autosave_interval = undefined;
     }
 };
 
