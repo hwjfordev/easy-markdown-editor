@@ -2269,6 +2269,7 @@ function isLocalStorageAvailable() {
 EasyMDE.prototype.autosave_setup = function () {
     if (isLocalStorageAvailable()) {
         var easyMDE = this;
+        easyMDE._instance_id = Date.now();
 
         if (this.options.autosave.uniqueId == undefined || this.options.autosave.uniqueId == '') {
             console.log('EasyMDE: You must set a uniqueId to use the autosave feature');
@@ -2302,7 +2303,10 @@ EasyMDE.prototype.autosave_setup = function () {
             var isRemoteAutoSaving = false;
             this._remote_autosave_interval = setInterval(function(){
                 var local_obj = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
-                if (local_obj==null) return;
+                if (local_obj==null
+                    || (local_obj.instance_id !== _this._instance_id && Date.now() - local_obj.ts < 60 * 1000 )
+                        // 別的instance (e.g., 同個文章同時開兩個分頁)產生的local檔，應該讓該instance負責上傳就好，觀察期1分鐘。
+                ) return;
 
                 if (isRemoteAutoSaving) return;
                 isRemoteAutoSaving = true;
@@ -2342,7 +2346,9 @@ EasyMDE.prototype.autosave = function (){
     }
     this.options.autosave.bypassOneShotValue = undefined;
 
-    writeToLocalStorage('smde_' + this.options.autosave.uniqueId, extend({}, {value:value}, (this.options.autosave.autosave_meta?this.options.autosave.autosave_meta():{})));
+    writeToLocalStorage('smde_' + this.options.autosave.uniqueId, 
+                extend({}, {value:value, ts:Date.now(), instance_id:this._instance_id}, 
+                           (this.options.autosave.autosave_meta?this.options.autosave.autosave_meta():{})));
 
     var el = document.getElementById('autosaved');
     if (el != null && el != undefined && el != '') {
