@@ -1847,7 +1847,10 @@ function EasyMDE(options) {
     // so, the setter for the initialValue can only run after
     // the element has been rendered
     if (options.initialValue && (!this.options.autosave || this.options.autosave.foundSavedValue !== true)) {
-        this.value(options.initialValue);
+        this.setValueWithoutAutoSave(options.initialValue);
+        // this.value(options.initialValue);
+        // this.options.autosave.bypassOneShotValue = options.initialValue;
+        this.codemirror.getDoc().clearHistory();
     }
 
     if (options.uploadImage) {
@@ -2160,13 +2163,15 @@ EasyMDE.prototype.render = function (el) {
         this.gui.statusbar = this.createStatusbar();
     }
     if (options.autosave != undefined && options.autosave.enabled === true) {
-        this.autosave(); // use to load localstorage content
-        this.codemirror.on('change', function () {
-            clearTimeout(self._autosave_timeout);
-            self._autosave_timeout = setTimeout(function () {
-                self.autosave();
-            }, self.options.autosave.submit_delay || self.options.autosave.delay || 1000);
-        });
+        var result = this.autosave_setup(); // use to load localstorage content
+        if (result){
+            this.codemirror.on('change', function () {
+                clearTimeout(self._autosave_timeout);
+                self._autosave_timeout = setTimeout(function () {
+                    self.autosave();
+                }, self.options.autosave.submit_delay || self.options.autosave.delay || 1000);
+            });
+        }
     }
 
     function calcHeight(naturalWidth, naturalHeight) {
@@ -2261,92 +2266,93 @@ function isLocalStorageAvailable() {
     return true;
 }
 
-EasyMDE.prototype.autosave = function () {
+EasyMDE.prototype.autosave_setup = function () {
     if (isLocalStorageAvailable()) {
         var easyMDE = this;
 
         if (this.options.autosave.uniqueId == undefined || this.options.autosave.uniqueId == '') {
             console.log('EasyMDE: You must set a uniqueId to use the autosave feature');
-            return;
+            return false;
         }
 
-        if (this.options.autosave.binded !== true) {
-            if (easyMDE.element.form != null && easyMDE.element.form != undefined) {
-                easyMDE.element.form.addEventListener('submit', function () {
-                    clearTimeout(easyMDE.autosaveTimeoutId);
-                    easyMDE.autosaveTimeoutId = undefined;
+        if (easyMDE.element.form != null && easyMDE.element.form != undefined) {
+            easyMDE.element.form.addEventListener('submit', function () {
+                clearTimeout(easyMDE.autosaveTimeoutId);
+                easyMDE.autosaveTimeoutId = undefined;
 
-                    clearLocalStorage('smde_' + easyMDE.options.autosave.uniqueId);
-                });
-            }
-
-            this.options.autosave.binded = true;
+                clearLocalStorage('smde_' + easyMDE.options.autosave.uniqueId);
+            });
         }
 
-        if (this.options.autosave.loaded !== true) {
-            var local_tmp = readFromLocalStorage('smde_' + this.options.autosave.uniqueId);
-            if (local_tmp !== null && local_tmp.value !== null) {
-                var tmp_value = local_tmp.value;  
-                if(this.options.autosave.remote_local_init_resolve) tmp_value = this.options.autosave.remote_local_init_resolve(local_tmp);
-                this.codemirror.setValue(tmp_value);
-                this.codemirror.getDoc().clearHistory(); // HWJ: 重新刷新頁面讀取之前最新autosave內容並設定為初始值後，應該把cm的undo/redo歷史清空才合理，不然按ctrl-z(undo)馬上讓原本載入的內容都消失。
-                this.options.autosave.foundSavedValue = true;
-            }
 
-
-            if (this.options.autosave.remote_autosave_cb){
-                clearTimeout(this._remote_autosave_interval);
-                var _this = this;
-                var isRemoteAutoSaving = false;
-                this._remote_autosave_interval = setInterval(function(){
-                    if (isRemoteAutoSaving) return;
-                    isRemoteAutoSaving = true;
-
-                    var local_obj = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
-                    if (local_obj==null) return;
-                    _this.options.autosave.remote_autosave_cb(local_obj)
-                        .then(function(){
-                            console.log('remote_autosave_cb success!'); 
-                            // 經過一段時間了, 如果本地的沒有更新的話，就可以刪掉了，不然會一直重複上傳。
-                            var local_obj_again = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
-                            console.log(local_obj_again, local_obj);
-                            if (local_obj_again && local_obj_again.value == local_obj.value){
-                                clearLocalStorage('smde_' + _this.options.autosave.uniqueId);
-                                console.log('delete success!');
-                            }
-                            isRemoteAutoSaving = false;
-                        })
-                        .catch(function(e){console.error(e); isRemoteAutoSaving = false;});
-    
-                }, this.options.autosave.save_remote_interval || 800);
-            }
-
-
-
-            this.options.autosave.loaded = true;
+        var local_tmp = readFromLocalStorage('smde_' + this.options.autosave.uniqueId);
+        if (local_tmp !== null && local_tmp.value !== null) {
+            var tmp_value = (this.options.autosave.remote_local_init_resolve)? this.options.autosave.remote_local_init_resolve(local_tmp) :local_tmp.value;  
+            this.setValueWithoutAutoSave(tmp_value);
+            // this.options.autosave.bypassOneShotValue = tmp_value;
+            // this.codemirror.setValue(tmp_value);
+            this.codemirror.getDoc().clearHistory(); // HWJ: 重新刷新頁面讀取之前最新autosave內容並設定為初始值後，應該把cm的undo/redo歷史清空才合理，不然按ctrl-z(undo)馬上讓原本載入的內容都消失。
+            this.options.autosave.foundSavedValue = true;
         }
 
-        var value = easyMDE.value();
 
-        // HWJ: make it an empty store anyway
-        // if (value !== '') {
-            writeToLocalStorage('smde_' + this.options.autosave.uniqueId, extend({}, {value:value}, (this.options.autosave.autosave_meta?this.options.autosave.autosave_meta():{})));
-        // } else {
-        //     clearLocalStorage('smde_' + this.options.autosave.uniqueId);
-        // }
+        if (this.options.autosave.remote_autosave_cb){
+            clearTimeout(this._remote_autosave_interval);
+            var _this = this;
+            var isRemoteAutoSaving = false;
+            this._remote_autosave_interval = setInterval(function(){
+                var local_obj = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                if (local_obj==null) return;
 
-        var el = document.getElementById('autosaved');
-        if (el != null && el != undefined && el != '') {
-            var d = new Date();
-            var dd = new Intl.DateTimeFormat([this.options.autosave.timeFormat.locale, 'en-US'], this.options.autosave.timeFormat.format).format(d);
-            var save = this.options.autosave.text == undefined ? 'Autosaved: ' : this.options.autosave.text;
-
-            el.innerHTML = save + dd;
+                if (isRemoteAutoSaving) return;
+                isRemoteAutoSaving = true;
+                _this.options.autosave.remote_autosave_cb(local_obj)
+                    .then(function(){
+                        console.log('remote_autosave_cb success!'); 
+                        // 經過一段時間了, 如果本地的沒有更新的話，就可以刪掉了，不然會一直重複上傳。
+                        var local_obj_again = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                        if (local_obj_again && local_obj_again.value == local_obj.value){
+                            clearLocalStorage('smde_' + _this.options.autosave.uniqueId);
+                            console.log('delete success!');
+                        }
+                        isRemoteAutoSaving = false;
+                    })
+                    .catch(function(e){console.error(e); isRemoteAutoSaving = false;});
+                
+            }, this.options.autosave.save_remote_interval || 800);
         }
+
+        return true;
+        
     } else {
         console.log('EasyMDE: localStorage not available, cannot autosave');
+        return false;
     }
 };
+
+EasyMDE.prototype.autosave = function (){
+    var easyMDE = this;
+    var value = easyMDE.value();
+
+    if (this.options.autosave.bypassOneShotValue !== undefined
+        && this.options.autosave.bypassOneShotValue === value){
+        // 第一次set from initial value時，就會觸發onchange -> autosave，因為不是編輯後產生的改動，故不需要autosave。
+        // 後續也可以透過 setValueWithoutAutoSave() API 來繞過autosave，就不會自動產生local檔，也就不會被上傳到server上。
+        return;
+    }
+    this.options.autosave.bypassOneShotValue = undefined;
+
+    writeToLocalStorage('smde_' + this.options.autosave.uniqueId, extend({}, {value:value}, (this.options.autosave.autosave_meta?this.options.autosave.autosave_meta():{})));
+
+    var el = document.getElementById('autosaved');
+    if (el != null && el != undefined && el != '') {
+        var d = new Date();
+        var dd = new Intl.DateTimeFormat([this.options.autosave.timeFormat.locale, 'en-US'], this.options.autosave.timeFormat.format).format(d);
+        var save = this.options.autosave.text == undefined ? 'Autosaved: ' : this.options.autosave.text;
+
+        el.innerHTML = save + dd;
+    }
+}
 
 EasyMDE.prototype.clearAutosavedValue = function () {
     if (isLocalStorageAvailable()) {
@@ -2835,7 +2841,26 @@ EasyMDE.prototype.value = function (val) {
         return this;
     }
 };
-
+/**
+ * Get or set the text content, but save without autosave.
+ */
+ EasyMDE.prototype.setValueWithoutAutoSave = function (val) {
+    var cm = this.codemirror;
+    if (val === undefined) {
+        return cm.getValue();
+    } else {
+        if (this.options.autosave){
+            this.options.autosave.bypassOneShotValue = val;
+        }
+        cm.getDoc().setValue(val);
+        if (this.isPreviewActive()) {
+            var wrapper = cm.getWrapperElement();
+            var preview = wrapper.lastChild;
+            preview.innerHTML = this.options.previewRender(val, preview);
+        }
+        return this;
+    }
+};
 
 /**
  * Bind static methods for exports.
