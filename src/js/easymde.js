@@ -2297,7 +2297,11 @@ EasyMDE.prototype.autosave = function () {
             if (this.options.autosave.remote_autosave_cb){
                 clearTimeout(this._remote_autosave_interval);
                 var _this = this;
+                var isRemoteAutoSaving = false;
                 this._remote_autosave_interval = setInterval(function(){
+                    if (isRemoteAutoSaving) return;
+                    isRemoteAutoSaving = true;
+
                     var local_obj = readFromLocalStorage('smde_' + _this.options.autosave.uniqueId);
                     if (local_obj==null) return;
                     _this.options.autosave.remote_autosave_cb(local_obj)
@@ -2310,8 +2314,9 @@ EasyMDE.prototype.autosave = function () {
                                 clearLocalStorage('smde_' + _this.options.autosave.uniqueId);
                                 console.log('delete success!');
                             }
+                            isRemoteAutoSaving = false;
                         })
-                        .catch(function(e){console.error(e);});
+                        .catch(function(e){console.error(e); isRemoteAutoSaving = false;});
     
                 }, this.options.autosave.save_remote_interval || 800);
             }
